@@ -2,28 +2,30 @@
 ##  Copyright (c) 2023 unSkript, Inc
 ##  All rights reserved.
 ##
-from typing import Tuple, List, Optional
+from typing import Tuple, Optional
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 import requests
 from pydantic import BaseModel, Field
-from datetime import datetime, timedelta
+from datetime import datetime
 import ssl
 import socket
+from OpenSSL import crypto  # requires: pip install pyOpenSSL
 
-# Disabling insecure request warnings
+# Disable insecure request warnings
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 
 class InputSchema(BaseModel):
     endpoints: list = Field(
-        ..., description='The URLs of the endpoint whose SSL certificate is to be checked. Eg: ["https://www.google.com", "https://expired.badssl.com/"]', title='List of URLs'
+        ...,
+        description='List of endpoints to check. Example: ["https://www.google.com", "http://example.com"]',
+        title='List of URLs'
     )
     threshold: Optional[int] = Field(
         30,
-        description='The number of days within which, if the certificate is set to expire is considered a potential issue.',
-        title='K8s Namespace',
+        description='Number of days before expiry to consider SSL certificate as at-risk.',
+        title='SSL Expiry Threshold'
     )
-    
 
 
 def k8s_check_service_status_printer(output):
@@ -35,83 +37,88 @@ def k8s_check_service_status_printer(output):
     if "Error" in results[0]:
         print(f"Error: {results[0]['Error']}")
         return
-    print("\n" + "=" * 100) 
 
+    print("\n" + "=" * 100)
     for result in results:
         print(f"Service:\t{result['endpoint']}")
-        print("-" * 100)  
-        print(f"Status: {result['status']}\n")
-        print("=" * 100) 
+        print("-" * 100)
+        print(f"Status: {result['status']}")
+        if "Reason" in result:
+            print(f"Reason: {result['Reason']}")
+        print("=" * 100)
 
 
-def check_ssl_expiry(endpoint, threshold):
+def check_ssl_expiry(endpoint: str, threshold: int) -> Tuple[int, bool]:
+    """
+    Check SSL certificate expiry date for a given endpoint.
+    Works with self-signed and valid certificates using pyOpenSSL.
+    """
     hostname = endpoint.split("//")[-1].split("/")[0]
-    ssl_date_fmt = r'%b %d %H:%M:%S %Y %Z'
-
-    # Create an SSL context that restricts to secure versions of TLS
-    context = ssl.create_default_context()
-    context.check_hostname = True
-    context.verify_mode = ssl.CERT_REQUIRED
-
-    # Ensure that only TLSv1.2 and later are used (disabling TLSv1.0 and TLSv1.1) as TLS versions 1.0 and 1.1 are known to be vulnerable to attacks
-    context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
-
     try:
+        context = ssl._create_unverified_context()
+
         with socket.create_connection((hostname, 443), timeout=10) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssl_sock:
-                ssl_info = ssl_sock.getpeercert()
-                
-        expiry_date = datetime.strptime(ssl_info['notAfter'], ssl_date_fmt).date()
+                der_cert = ssl_sock.getpeercert(binary_form=True)
+
+        # Decode certificate using OpenSSL
+        x509 = crypto.load_certificate(crypto.FILETYPE_ASN1, der_cert)
+        not_after_str = x509.get_notAfter().decode("ascii")
+        expiry_date = datetime.strptime(not_after_str, "%Y%m%d%H%M%SZ").date()
         days_remaining = (expiry_date - datetime.utcnow().date()).days
-        if days_remaining <= threshold:
-            return (days_remaining, False)
-        else:
-            return (days_remaining, True)
+
+        print(f"✅ SSL certificate for {hostname} expires on {expiry_date} ({days_remaining} days remaining)")
+
+        return (days_remaining, days_remaining > threshold)
+
     except Exception as e:
+        print(f"❌ Error while fetching SSL expiry for {hostname}: {e}")
         raise e
 
 
-def k8s_check_service_status(handle, endpoints:list, threshold: int = 30) -> Tuple:
+def k8s_check_service_status(handle, endpoints: list, threshold: int = 30) -> Tuple:
     """
-    k8s_check_service_status Checks the health status of the provided endpoints.
-
-    :param endpoints: The URLs of the endpoint whose SSL certificate is to be checked. Eg: ["https://www.google.com", "https://expired.badssl.com/"]
-    :param threshold: The number of days within which, if the certificate is set to expire, 
-                      is considered a potential issue.
-    :return: Tuple with a boolean indicating if all services are healthy, and a list of dictionaries 
-             with individual service status.
+    Checks both HTTP & HTTPS endpoints:
+      - HTTPS: uses pyOpenSSL for expiry check (ignores CA verification)
+      - HTTP: uses original status code logic
     """
     failed_endpoints = []
 
     for endpoint in endpoints:
         status_info = {"endpoint": endpoint}
 
-        # Check if the endpoint is HTTPS or not
         if endpoint.startswith("https://"):
             try:
-                response = requests.get(endpoint, verify=True, timeout=5)
+                # Allow self-signed and unverified certs
+                response = requests.get(endpoint, verify=False, timeout=5)
                 days_remaining, is_healthy = check_ssl_expiry(endpoint, threshold)
+
                 if not (response.status_code == 200 and is_healthy):
-                    status_info["status"] = 'unhealthy'
-                    reason = f'SSL expiring in {days_remaining} days.' if not is_healthy else f'Status code: {response.status_code}'
+                    status_info["status"] = "unhealthy"
+                    reason = (
+                        f"SSL expiring in {days_remaining} days."
+                        if not is_healthy
+                        else f"Status code: {response.status_code}"
+                    )
                     status_info["Reason"] = reason
                     failed_endpoints.append(status_info)
-            except requests.RequestException as e:
-                status_info["status"] = 'unhealthy'
-                reason = f'SSL error: {str(e)}' if 'CERTIFICATE_VERIFY_FAILED' in str(e) else f'Error: {str(e)}'
-                status_info["Reason"] = reason
+
+            except Exception as e:
+                status_info["status"] = "unhealthy"
+                status_info["Reason"] = f"HTTPS error: {str(e)}"
                 failed_endpoints.append(status_info)
+
         else:
-            # For non-HTTPS endpoints
+            # HTTP — keep your previous working logic
             try:
                 response = requests.get(endpoint, timeout=5)
                 if response.status_code != 200:
-                    status_info["status"] = 'unhealthy'
-                    status_info["Reason"] = f'Status code: {response.status_code}'
+                    status_info["status"] = "unhealthy"
+                    status_info["Reason"] = f"Status code: {response.status_code}"
                     failed_endpoints.append(status_info)
             except requests.RequestException as e:
-                status_info["status"] = 'unhealthy'
-                status_info["Reason"] = f'Error: {str(e)}'
+                status_info["status"] = "unhealthy"
+                status_info["Reason"] = f"Error: {str(e)}"
                 failed_endpoints.append(status_info)
 
     if failed_endpoints:
