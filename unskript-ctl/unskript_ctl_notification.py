@@ -862,8 +862,19 @@ class CustomSMTPNotification(EmailNotification):
         summary_results = kwargs.get('summary_result', [])
         failed_result = kwargs.get('failed_result', {})
         output_metadata_file = kwargs.get('output_metadata_file')
-        to_email = os.environ.get("LB_NOTIFICATION_RECEIVER_EMAIL",
-                                  "name@example.com")
+
+        # Recipient precedence: explicit kwarg -> config Custom.to-email ->
+        # LB_NOTIFICATION_RECEIVER_EMAIL env. We deliberately do NOT fall back to a
+        # placeholder address; sending to a bogus recipient is worse than not sending.
+        custom_config = self.email_config.get('Custom') or {}
+        to_email = kwargs.get('to_email') \
+            or custom_config.get('to-email') \
+            or os.environ.get("LB_NOTIFICATION_RECEIVER_EMAIL")
+        if not to_email:
+            self.logger.error(
+                "Custom (OAuth/Graph) email: no recipient configured. Set "
+                "notification.Email.Custom.to-email or LB_NOTIFICATION_RECEIVER_EMAIL.")
+            return False
 
         subject = kwargs.get('subject', self.email_config.get('email_subject_line', 'Run Result'))
 
@@ -995,10 +1006,12 @@ class Notification(NotificationFactory):
                             subject = kwargs.get('subject', self.email_config.get('email_subject_line', 'Run Result'))
                             )
             elif self.email_config.get('provider').lower() == 'custom':
+                custom = self.email_config.get('Custom') or {}
                 retval = CustomSMTPNotification().notify(
                             summary_result = summary_results,
                             failed_result = failed_objects,
                             output_metadata_file = kwargs.get('output_metadata_file'),
+                            to_email = kwargs.get('to_email', custom.get('to-email')),
                             subject = kwargs.get('subject', self.email_config.get('email_subject_line', 'Run Result'))
                             )
             elif self.email_config.get('provider').lower() == 'sendgrid':
