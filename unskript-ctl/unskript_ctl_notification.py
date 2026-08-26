@@ -31,7 +31,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, before_log, af
 from unskript_utils import *
 from unskript_ctl_version import *
 from unskript_ctl_factory import NotificationFactory
-from unskript_ctl_custom_notification import custom_email_notification_main
+from unskript_ctl_custom_notification import custom_email_notification_main, normalize_recipients
 
 # This class implements Notification function for Slack
 class SlackNotification(NotificationFactory):
@@ -866,10 +866,13 @@ class CustomSMTPNotification(EmailNotification):
         # Recipient precedence: explicit kwarg -> config Custom.to-email ->
         # LB_NOTIFICATION_RECEIVER_EMAIL env. We deliberately do NOT fall back to a
         # placeholder address; sending to a bogus recipient is worse than not sending.
+        # Any of the three may carry more than one address: a YAML list in the
+        # config, or a comma separated string in the kwarg/env var.
         custom_config = self.email_config.get('Custom') or {}
         to_email = kwargs.get('to_email') \
             or custom_config.get('to-email') \
             or os.environ.get("LB_NOTIFICATION_RECEIVER_EMAIL")
+        to_email = normalize_recipients(to_email)
         if not to_email:
             self.logger.error(
                 "Custom (OAuth/Graph) email: no recipient configured. Set "

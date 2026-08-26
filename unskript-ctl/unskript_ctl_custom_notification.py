@@ -7,7 +7,7 @@ import requests
 import json
 import base64
 import logging
-from typing import Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 from urllib3.exceptions import InsecureRequestWarning
@@ -29,6 +29,31 @@ DEFAULT_EMAIL_TEMPLATE = """
 
 GRAPH_API_BASE_URL = "https://graph.microsoft.com/v1.0"
 OAUTH_TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+
+
+def normalize_recipients(recipients: Union[str, List[str], None]) -> List[str]:
+    """Normalize a recipient specification into a de-duplicated list of addresses.
+
+    Accepts a single address, a list of addresses (as configured in
+    unskript_ctl_config.yaml) or a comma/semicolon separated string (as it can
+    only be expressed via an environment variable). Empty entries are dropped.
+    """
+    if not recipients:
+        return []
+
+    if isinstance(recipients, str):
+        recipients = [recipients]
+
+    normalized = []
+    for entry in recipients:
+        if not entry:
+            continue
+        for address in str(entry).replace(';', ',').split(','):
+            address = address.strip()
+            if address and address not in normalized:
+                normalized.append(address)
+
+    return normalized
 
 @dataclass
 class VaultConfig:
@@ -189,7 +214,7 @@ class CustomEmailNotification:
     )
     def send_email(
         self,
-        recipient_email: str,
+        recipient_email: Union[str, List[str]],
         subject: str,
         email_content: Optional[str] = None,
         file_path: Optional[Union[str, Path]] = None
@@ -198,7 +223,8 @@ class CustomEmailNotification:
         Send email using Microsoft Graph API.
         
         Args:
-            recipient_email: Email address of the recipient
+            recipient_email: Recipient address, or a list/comma-separated string
+                             of addresses
             subject: Email subject
             email_content: HTML content of the email (optional)
             file_path: Path to attachment file (optional)
@@ -210,6 +236,10 @@ class CustomEmailNotification:
             EmailSendError: If email sending fails
             ValueError: If input validation fails
         """
+        recipients = normalize_recipients(recipient_email)
+        if not recipients:
+            raise ValueError("No recipient email address provided")
+
         # Get fresh access token
         access_token = self._get_access_token()
 
@@ -223,9 +253,10 @@ class CustomEmailNotification:
                 "toRecipients": [
                     {
                         "emailAddress": {
-                            "address": recipient_email
+                            "address": address
                         }
                     }
+                    for address in recipients
                 ]
             }
         }

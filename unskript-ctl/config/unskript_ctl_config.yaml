@@ -194,11 +194,16 @@ notification:
     #    - custom - Microsoft 365 OAuth via Graph API (no username/password).
     #               Credentials (tenantId/clientId/clientSecret/scope/smtpSender)
     #               are read from Vault; requires VAULT_ADDR and VAULT_TOKEN in the
-    #               pod env. Recipient is taken from Custom.to-email below.
+    #               pod env. Recipients are taken from Custom.to-email below.
     provider: ""
     # Custom (Microsoft 365 OAuth / Graph API) settings. Sender + OAuth app
-    # credentials live in Vault at smtp_credential_path above; only the recipient
-    # is configured here (falls back to LB_NOTIFICATION_RECEIVER_EMAIL env).
+    # credentials live in Vault at smtp_credential_path above; only the recipients
+    # are configured here (falls back to LB_NOTIFICATION_RECEIVER_EMAIL env).
+    # to-email accepts a single address or a list, for example:
+    #   to-email:
+    #     - oncall@example.com
+    #     - platform-team@example.com
+    # The LB_NOTIFICATION_RECEIVER_EMAIL fallback accepts a comma separated list.
     Custom:
       to-email: ""
     SMTP:
