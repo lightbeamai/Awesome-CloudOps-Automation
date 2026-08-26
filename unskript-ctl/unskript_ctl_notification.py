@@ -809,11 +809,15 @@ class SmtpNotification(EmailNotification):
                                 smtp_host: str,
                                 smtp_user: str,
                                 smtp_password: str,
-                                to_email: str,
+                                to_email,
                                 from_email: str,
                                 subject: str):
         """send_smtp_notification: This function sends the summary result
         in the form of an email for smtp option.
+
+        to_email may be a single address, a list of addresses (a YAML list in
+        the config) or a comma separated string (the only form an environment
+        variable can carry).
         """
         msg = MIMEMultipart('mixed')
         if from_email:
@@ -821,11 +825,12 @@ class SmtpNotification(EmailNotification):
         else:
             msg['From'] = smtp_user
 
-        to_email_list = []
-        if isinstance(to_email, list):
-            to_email_list = to_email
-        else:
-            to_email_list = [to_email]
+        to_email_list = normalize_recipients(to_email)
+        if not to_email_list:
+            self.logger.error(
+                "SMTP email: no recipient configured. Set "
+                "notification.Email.SMTP.to-email.")
+            return False
 
         msg['To'] = ", ".join(to_email_list)
         msg['Subject'] = subject
@@ -844,11 +849,17 @@ class SmtpNotification(EmailNotification):
                                     attachment=msg)
 
         try:
-            server.sendmail(smtp_user, to_email, msg.as_string())
+            server.sendmail(smtp_user, to_email_list, msg.as_string())
         except Exception as e:
             self.logger.error(f"ERROR: {e}")
+            return False
         finally:
-            self.logger.info(f"Notification sent successfully to {to_email}")
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+        self.logger.info(f"Notification sent successfully to {', '.join(to_email_list)}")
         return True
 
 

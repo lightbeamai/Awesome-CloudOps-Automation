@@ -206,6 +206,11 @@ notification:
     # The LB_NOTIFICATION_RECEIVER_EMAIL fallback accepts a comma separated list.
     Custom:
       to-email: ""
+    # to-email accepts a single address or a list, for example:
+    #   to-email:
+    #     - oncall@example.com
+    #     - platform-team@example.com
+    # A comma separated string is also accepted.
     SMTP:
       vault-secret-path: ""
       smtp-host: ""
