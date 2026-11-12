@@ -90,7 +90,7 @@ permissions:
 
 jobs:
   build-unskript:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ inputs.enabled }}
     strategy:
       fail-fast: false
@@ -247,7 +247,7 @@ jobs:
         path: /tmp/linux_arm64/gotty
 
   build-docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ inputs.enabled }}
     needs: [build-unskript, build-gotty]
     strategy:

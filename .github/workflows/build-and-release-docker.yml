@@ -104,7 +104,7 @@ permissions:
 
 jobs:
   build-elyra:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: ${{ inputs.enabled }}
     strategy:
       fail-fast: false
@@ -149,7 +149,7 @@ jobs:
           path: /tmp/elyra-3.0.0.dev0.tar.gz
 
   build-unskript:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ inputs.enabled }}
     needs: [build-elyra]
     strategy:
@@ -340,7 +340,7 @@ jobs:
           path: /tmp/jupyterlab_code_snippets-2.1.1-py3-none-any.whl
 
   build-docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: ${{ inputs.enabled }}
     needs: [build-unskript, build-elyra, build-jlab-celltoolbar, build-code-snippets]
     strategy:
